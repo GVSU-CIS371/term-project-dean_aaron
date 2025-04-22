@@ -287,11 +287,20 @@ app.post('/api/tasks/:id/share', authenticateUser, async (req, res) => {
       }
     }
     
-    await db.collection('tasks').doc(taskId).update({
-      isShared: true,
-      sharedWith: admin.firestore.FieldValue.arrayUnion(...sharedWithIds),
-      lastModified: admin.firestore.FieldValue.serverTimestamp()
-    });
+    // Check if there are any shared IDs before updating
+    if (sharedWithIds.length > 0) {
+        await db.collection('tasks').doc(taskId).update({
+        isShared: true,
+        sharedWith: admin.firestore.FieldValue.arrayUnion(...sharedWithIds),
+        lastModified: admin.firestore.FieldValue.serverTimestamp()
+        });
+    } else {
+        // Just update the isShared flag if no IDs to add
+        await db.collection('tasks').doc(taskId).update({
+        isShared: true,
+        lastModified: admin.firestore.FieldValue.serverTimestamp()
+        });
+    }
     
     res.status(200).json({ message: 'Task shared successfully' });
   } catch (error) {
