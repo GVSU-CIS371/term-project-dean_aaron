@@ -60,8 +60,280 @@
 
     <!-- Main Content (visible when logged in) -->
     <main v-if="user">
-      <!-- Rest of your template remains largely the same -->
-      <!-- Only change API calls in the script section -->
+      <div class="dashboard">
+        <div class="sidebar">
+          <div class="categories">
+            <h3>Categories</h3>
+            <ul>
+              <!-- Add "All Categories" option -->
+              <li 
+                @click="filterByCategory(null, true)"
+                :class="{ active: selectedCategory === null && !uncategorizedOnly }"
+                style="borderLeft: 4px solid #95a5a6;"
+              >
+                All Categories
+              </li>
+              <!-- Add "Uncategorized" option -->
+              <li 
+                @click="filterByCategory(null, false)"
+                :class="{ active: selectedCategory === null && uncategorizedOnly }"
+                style="borderLeft: 4px solid #95a5a6;"
+              >
+                Uncategorized
+              </li>
+              <li 
+                v-for="category in categories" 
+                :key="category.id" 
+                @click="filterByCategory(category.id, false)"
+                :class="{ active: selectedCategory === category.id }"
+                :style="{ borderLeft: `4px solid ${category.color}` }"
+              >
+                {{ category.name }}
+              </li>
+              <li class="add-category" @click="showCategoryForm = true">+ Add Category</li>
+            </ul>
+          </div>
+          
+          <div class="filters">
+            <h3>Filters</h3>
+            <ul>
+              <li 
+                @click="filterByStatus('all')"
+                :class="{ active: statusFilter === 'all' }"
+              >
+                All Tasks
+              </li>
+              <li 
+                @click="filterByStatus('Not Started')"
+                :class="{ active: statusFilter === 'Not Started' }"
+              >
+                Not Started
+              </li>
+              <li 
+                @click="filterByStatus('In Progress')"
+                :class="{ active: statusFilter === 'In Progress' }"
+              >
+                In Progress
+              </li>
+              <li 
+                @click="filterByStatus('Completed')"
+                :class="{ active: statusFilter === 'Completed' }"
+              >
+                Completed
+              </li>
+            </ul>
+          </div>
+          
+          <div class="templates">
+            <h3>Templates</h3>
+            <ul>
+              <li v-for="template in templates" :key="template.id" @click="useTemplate(template)">
+                {{ template.title }}
+              </li>
+              <li class="add-template" @click="showTemplateForm = true">+ Create Template</li>
+            </ul>
+          </div>
+        </div>
+        
+        <div class="content">
+          <div class="controls">
+            <button @click="showTaskForm = true" class="btn btn-primary">+ Add Task</button>
+            <div class="sort-controls">
+              <label>Sort by:</label>
+              <select v-model="sortBy" @change="sortTasks">
+                <option value="dueDate">Due Date</option>
+                <option value="priority">Priority</option>
+                <option value="creationDate">Creation Date</option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="tasks-container">
+            <div 
+              v-for="task in filteredTasks" 
+              :key="task.id" 
+              class="task-card"
+              :class="{ 
+                'priority-high': task.priority === 'High',
+                'priority-medium': task.priority === 'Medium',
+                'priority-low': task.priority === 'Low',
+                'status-completed': task.status === 'Completed'
+              }"
+            >
+              <div class="task-header">
+                <h3>{{ task.title }}</h3>
+                <div class="task-actions">
+                  <button v-if="task.isOwner" @click="editTask(task)" class="btn-icon">✏️</button>
+                  <button v-if="task.isOwner" @click="deleteTask(task.id)" class="btn-icon">🗑️</button>
+                  <button 
+                    v-if="task.isOwner"
+                    @click="showShareTaskForm = true; taskToShare = task" 
+                    class="btn-icon"
+                    :class="{ 'shared': task.isShared }"
+                  >
+                    🔗
+                  </button>
+                </div>
+              </div>
+              <p class="task-description">{{ task.description }}</p>
+              <div class="task-footer">
+                <div class="task-meta">
+                  <span class="task-due-date">Due: {{ formatDate(task.dueDate) }}</span>
+                  <span class="task-priority">{{ task.priority }}</span>
+                </div>
+                <div class="task-status">
+                  <select v-model="task.status" @change="updateTaskStatus(task)">
+                    <option value="Not Started">Not Started</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Completed">Completed</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            
+            <div v-if="filteredTasks.length === 0" class="no-tasks">
+              <p>No tasks to display. Add a new task to get started!</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Add/Edit Task Form -->
+      <div class="modal" v-if="showTaskForm">
+        <div class="modal-content">
+          <h2>{{ editingTask ? 'Edit Task' : 'Add New Task' }}</h2>
+          <form @submit.prevent="saveTask">
+            <div class="form-group">
+              <label>Title:</label>
+              <input type="text" v-model="taskForm.title" required>
+            </div>
+            <div class="form-group">
+              <label>Description:</label>
+              <textarea v-model="taskForm.description" rows="3"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Due Date:</label>
+              <input type="date" v-model="taskForm.dueDate" required>
+            </div>
+            <div class="form-group">
+              <label>Priority:</label>
+              <select v-model="taskForm.priority">
+                <option value="High">High</option>
+                <option value="Medium">Medium</option>
+                <option value="Low">Low</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Category:</label>
+              <select v-model="taskForm.category">
+                <!-- Add option for no category -->
+                <option value="">No Category</option>
+                <option v-for="category in categories" :key="category.id" :value="category.id">
+                  {{ category.name }}
+                </option>
+              </select>
+            </div>
+            <div class="form-group" v-if="editingTask">
+              <label>Status:</label>
+              <select v-model="taskForm.status">
+                <option value="Not Started">Not Started</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Completed">Completed</option>
+              </select>
+            </div>
+            <div class="form-actions">
+              <button type="button" @click="showTaskForm = false" class="btn">Cancel</button>
+              <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      
+      <!-- Add Category Form -->
+      <div class="modal" v-if="showCategoryForm">
+        <div class="modal-content">
+          <h2>Add Category</h2>
+          <form @submit.prevent="saveCategory">
+            <div class="form-group">
+              <label>Name:</label>
+              <input type="text" v-model="categoryForm.name" required>
+            </div>
+            <div class="form-group">
+              <label>Color:</label>
+              <input type="color" v-model="categoryForm.color">
+            </div>
+            <div class="form-group">
+              <label>
+                <input type="checkbox" v-model="categoryForm.isDefault">
+                Set as default
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="button" @click="showCategoryForm = false" class="btn">Cancel</button>
+              <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      
+      <!-- Create Template Form -->
+      <div class="modal" v-if="showTemplateForm">
+        <div class="modal-content">
+          <h2>Create Template</h2>
+          <form @submit.prevent="saveTemplate">
+            <div class="form-group">
+              <label>Title:</label>
+              <input type="text" v-model="templateForm.title" required>
+            </div>
+            <div class="form-group">
+              <label>Description:</label>
+              <textarea v-model="templateForm.description" rows="3"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Include Tasks:</label>
+              <div class="template-tasks-selection">
+                <div 
+                  v-for="task in tasks" 
+                  :key="task.id" 
+                  class="template-task-item"
+                >
+                  <label>
+                    <input type="checkbox" v-model="templateForm.selectedTasks" :value="task.id">
+                    {{ task.title }}
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>
+                <input type="checkbox" v-model="templateForm.isPublic">
+                Make template public
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="button" @click="showTemplateForm = false" class="btn">Cancel</button>
+              <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      
+      <!-- Share Task Form -->
+      <div class="modal" v-if="showShareTaskForm">
+        <div class="modal-content">
+          <h2>Share Task</h2>
+          <form @submit.prevent="shareTask">
+            <div class="form-group">
+              <label>Share with (emails, comma separated):</label>
+              <input type="text" v-model="shareTaskForm.emails" placeholder="user1@example.com, user2@example.com">
+            </div>
+            <div class="form-actions">
+              <button type="button" @click="showShareTaskForm = false" class="btn">Cancel</button>
+              <button type="submit" class="btn btn-primary">Share</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </main>
     
     <!-- Landing Page (visible when not logged in) -->
@@ -79,32 +351,40 @@
 <script>
 import { ref, computed, onMounted } from 'vue';
 import { 
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
+  getAuth, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
   signOut,
   onAuthStateChanged,
   updateProfile 
 } from 'firebase/auth';
-import { 
-  collection, 
-  addDoc, 
-  doc, 
-  setDoc,  
-  getDocs, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
-  where, 
-  serverTimestamp, 
-  arrayUnion 
-} from 'firebase/firestore';
-import { auth, db } from './firebase';
+import { initializeApp } from 'firebase/app';
+import { db } from './firebase';
+import axios from 'axios';
 
 export default {
   name: 'TaskManager',
   setup() {
+    // Firebase config - replace with your own
+    const firebaseConfig = {
+        apiKey: "AIzaSyDuQ5U_jvbDYwHIyvGGlIso09Vc9jnMoWU",
+        authDomain: "termproject-89a0d.firebaseapp.com",
+        projectId: "termproject-89a0d",
+        storageBucket: "termproject-89a0d.firebasestorage.app",
+        messagingSenderId: "718048077031",
+        appId: "1:718048077031:web:0746e272b7399ac2bdee42"
+      };
+    
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    
+    // Backend API URL
+    const apiUrl = ref('http://localhost:3000/api');
+    
     // State
     const user = ref(null);
+    const authToken = ref(null);
     const tasks = ref([]);
     const categories = ref([]);
     const templates = ref([]);
@@ -168,10 +448,13 @@ export default {
       
       // Filter by category
       if (selectedCategory.value) {
+        // Filter by a specific category
         result = result.filter(task => task.category === selectedCategory.value);
       } else if (uncategorizedOnly.value) {
+        // Filter to show only uncategorized tasks
         result = result.filter(task => !task.category || task.category === '');
       }
+      // If neither condition is true, show all tasks (no category filtering)
       
       // Filter by status
       if (statusFilter.value !== 'all') {
@@ -195,7 +478,6 @@ export default {
     // Authentication methods
     const register = async () => {
       try {
-        // Create user with Firebase Auth
         const userCredential = await createUserWithEmailAndPassword(
           auth,
           registerForm.value.email,
@@ -207,11 +489,11 @@ export default {
           displayName: registerForm.value.displayName
         });
         
-        // Store additional user data in Firestore
-        await setDoc(doc(db, 'users', userCredential.user.uid), {
+        // Create user in backend
+        await axios.post(`${apiUrl.value}/users`, {
+          uid: userCredential.user.uid,
           email: registerForm.value.email,
-          displayName: registerForm.value.displayName,
-          lastLogin: serverTimestamp()
+          displayName: registerForm.value.displayName
         });
         
         showRegisterForm.value = false;
@@ -257,39 +539,10 @@ export default {
     
     const fetchTasks = async () => {
       try {
-        const userId = user.value.uid;
-        
-        // Create two queries: one for tasks the user owns and one for shared tasks
-        const ownedTasksQuery = query(collection(db, 'tasks'), where('userId', '==', userId));
-        const sharedTasksQuery = query(collection(db, 'tasks'), where('sharedWith', 'array-contains', userId));
-        
-        // Execute both queries
-        const [ownedTasksSnapshot, sharedTasksSnapshot] = await Promise.all([
-          getDocs(ownedTasksQuery),
-          getDocs(sharedTasksQuery)
-        ]);
-        
-        const fetchedTasks = [];
-        
-        // Add owned tasks
-        ownedTasksSnapshot.forEach(doc => {
-          fetchedTasks.push({
-            id: doc.id,
-            ...doc.data(),
-            isOwner: true
-          });
+        const response = await axios.get(`${apiUrl.value}/tasks`, {
+          headers: { Authorization: `Bearer ${authToken.value}` }
         });
-        
-        // Add shared tasks
-        sharedTasksSnapshot.forEach(doc => {
-          fetchedTasks.push({
-            id: doc.id,
-            ...doc.data(),
-            isOwner: false
-          });
-        });
-        
-        tasks.value = fetchedTasks;
+        tasks.value = response.data;
       } catch (error) {
         console.error('Error fetching tasks:', error);
       }
@@ -297,19 +550,10 @@ export default {
     
     const fetchCategories = async () => {
       try {
-        const userId = user.value.uid;
-        const categoriesQuery = query(collection(db, 'categories'), where('userId', '==', userId));
-        const categoriesSnapshot = await getDocs(categoriesQuery);
-        
-        const fetchedCategories = [];
-        categoriesSnapshot.forEach(doc => {
-          fetchedCategories.push({
-            id: doc.id,
-            ...doc.data()
-          });
+        const response = await axios.get(`${apiUrl.value}/categories`, {
+          headers: { Authorization: `Bearer ${authToken.value}` }
         });
-        
-        categories.value = fetchedCategories;
+        categories.value = response.data;
         
         // If no category selected and we have categories, select the first or default one
         if (selectedCategory.value === null && uncategorizedOnly.value === false && categories.value.length > 0) {
@@ -323,18 +567,10 @@ export default {
     
     const fetchTemplates = async () => {
       try {
-        const templatesQuery = query(collection(db, 'sharedTemplates'), where('isPublic', '==', true));
-        const templatesSnapshot = await getDocs(templatesQuery);
-        
-        const fetchedTemplates = [];
-        templatesSnapshot.forEach(doc => {
-          fetchedTemplates.push({
-            id: doc.id,
-            ...doc.data()
-          });
+        const response = await axios.get(`${apiUrl.value}/templates`, {
+          headers: { Authorization: `Bearer ${authToken.value}` }
         });
-        
-        templates.value = fetchedTemplates;
+        templates.value = response.data;
       } catch (error) {
         console.error('Error fetching templates:', error);
       }
@@ -348,7 +584,7 @@ export default {
         description: task.description,
         dueDate: task.dueDate,
         priority: task.priority,
-        category: task.category || '',
+        category: task.category || '',  // Handle null/undefined category
         status: task.status
       };
       showTaskForm.value = true;
@@ -358,22 +594,18 @@ export default {
       try {
         if (editingTask.value) {
           // Update existing task
-          const taskRef = doc(db, 'tasks', editingTask.value.id);
-          await updateDoc(taskRef, {
-            ...taskForm.value,
-            lastModified: serverTimestamp()
-          });
+          await axios.put(
+            `${apiUrl.value}/tasks/${editingTask.value.id}`, 
+            taskForm.value,
+            { headers: { Authorization: `Bearer ${authToken.value}` } }
+          );
         } else {
           // Create new task
-          await addDoc(collection(db, 'tasks'), {
-            ...taskForm.value,
-            userId: user.value.uid,
-            status: 'Not Started',
-            creationDate: serverTimestamp(),
-            lastModified: serverTimestamp(),
-            isShared: false,
-            sharedWith: []
-          });
+          await axios.post(
+            `${apiUrl.value}/tasks`, 
+            taskForm.value,
+            { headers: { Authorization: `Bearer ${authToken.value}` } }
+          );
         }
         
         // Reset and refresh
@@ -383,7 +615,7 @@ export default {
           description: '',
           dueDate: '',
           priority: 'Medium',
-          category: selectedCategory.value || ''
+          category: selectedCategory.value || '' // Set to selected category or empty string
         };
         editingTask.value = null;
         await fetchTasks();
@@ -396,7 +628,9 @@ export default {
     const deleteTask = async (taskId) => {
       if (confirm('Are you sure you want to delete this task?')) {
         try {
-          await deleteDoc(doc(db, 'tasks', taskId));
+          await axios.delete(`${apiUrl.value}/tasks/${taskId}`, {
+            headers: { Authorization: `Bearer ${authToken.value}` }
+          });
           await fetchTasks();
         } catch (error) {
           console.error('Error deleting task:', error);
@@ -407,11 +641,11 @@ export default {
     
     const updateTaskStatus = async (task) => {
       try {
-        const taskRef = doc(db, 'tasks', task.id);
-        await updateDoc(taskRef, {
-          status: task.status,
-          lastModified: serverTimestamp()
-        });
+        await axios.put(
+          `${apiUrl.value}/tasks/${task.id}`,
+          { status: task.status },
+          { headers: { Authorization: `Bearer ${authToken.value}` } }
+        );
       } catch (error) {
         console.error('Error updating task status:', error);
         alert('Failed to update task status. Please try again.');
@@ -422,10 +656,11 @@ export default {
     // Category methods
     const saveCategory = async () => {
       try {
-        await addDoc(collection(db, 'categories'), {
-          ...categoryForm.value,
-          userId: user.value.uid
-        });
+        await axios.post(
+          `${apiUrl.value}/categories`,
+          categoryForm.value,
+          { headers: { Authorization: `Bearer ${authToken.value}` } }
+        );
         
         // Reset and refresh
         showCategoryForm.value = false;
@@ -445,28 +680,25 @@ export default {
     const saveTemplate = async () => {
       try {
         // Prepare tasks for the template
-        const templateTasks = [];
-        for (const taskId of templateForm.value.selectedTasks) {
-          const task = tasks.value.find(t => t.id === taskId);
-          if (task) {
-            templateTasks.push({
-              title: task.title,
-              description: task.description,
-              priority: task.priority,
-              category: task.category
-            });
-          }
-        }
+        const templateTasks = tasks.value
+          .filter(task => templateForm.value.selectedTasks.includes(task.id))
+          .map(task => ({
+            title: task.title,
+            description: task.description,
+            priority: task.priority,
+            category: task.category
+          }));
         
-        await addDoc(collection(db, 'sharedTemplates'), {
-          title: templateForm.value.title,
-          description: templateForm.value.description,
-          tasks: templateTasks,
-          isPublic: templateForm.value.isPublic,
-          creatorId: user.value.uid,
-          downloadCount: 0,
-          createdAt: serverTimestamp()
-        });
+        await axios.post(
+          `${apiUrl.value}/templates`,
+          {
+            title: templateForm.value.title,
+            description: templateForm.value.description,
+            tasks: templateTasks,
+            isPublic: templateForm.value.isPublic
+          },
+          { headers: { Authorization: `Bearer ${authToken.value}` } }
+        );
         
         // Reset and refresh
         showTemplateForm.value = false;
@@ -487,16 +719,14 @@ export default {
       // Create tasks from the template
       try {
         for (const taskTemplate of template.tasks) {
-          await addDoc(collection(db, 'tasks'), {
-            ...taskTemplate,
-            userId: user.value.uid,
-            dueDate: getDefaultDueDate(),
-            status: 'Not Started',
-            creationDate: serverTimestamp(),
-            lastModified: serverTimestamp(),
-            isShared: false,
-            sharedWith: []
-          });
+          await axios.post(
+            `${apiUrl.value}/tasks`,
+            {
+              ...taskTemplate,
+              dueDate: getDefaultDueDate() // Set a default due date
+            },
+            { headers: { Authorization: `Bearer ${authToken.value}` } }
+          );
         }
         
         await fetchTasks();
@@ -520,35 +750,11 @@ export default {
           return;
         }
         
-        // Get user IDs from emails
-        const sharedWithIds = [];
-        for (const email of emailsArray) {
-          const userQuery = query(collection(db, 'users'), where('email', '==', email));
-          const userQuerySnapshot = await getDocs(userQuery);
-          if (!userQuerySnapshot.empty) {
-            userQuerySnapshot.forEach(doc => {
-              sharedWithIds.push(doc.id);
-            });
-          }
-        }
-        
-        // Update the task
-        const taskRef = doc(db, 'tasks', taskToShare.value.id);
-        
-        // Check if there are any shared IDs before updating
-        if (sharedWithIds.length > 0) {
-          await updateDoc(taskRef, {
-            isShared: true,
-            sharedWith: arrayUnion(...sharedWithIds),
-            lastModified: serverTimestamp()
-          });
-        } else {
-          // Just update the isShared flag if no IDs to add
-          await updateDoc(taskRef, {
-            isShared: true,
-            lastModified: serverTimestamp()
-          });
-        }
+        await axios.post(
+          `${apiUrl.value}/tasks/${taskToShare.value.id}/share`,
+          { shareWithEmails: emailsArray },
+          { headers: { Authorization: `Bearer ${authToken.value}` } }
+        );
         
         // Reset and refresh
         showShareTaskForm.value = false;
@@ -562,7 +768,7 @@ export default {
       }
     };
     
-    // Filtering and sorting
+    // Filter and sort - modified to handle uncategorized tasks
     const filterByCategory = (categoryId, showAll) => {
       if (showAll) {
         // Show all tasks
@@ -581,6 +787,10 @@ export default {
     
     const filterByStatus = (status) => {
       statusFilter.value = status;
+    };
+    
+    const sortTasks = () => {
+      // The actual sorting is done in the computed property
     };
     
     // Utility methods
@@ -602,8 +812,13 @@ export default {
       const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
         user.value = currentUser;
         if (currentUser) {
-          fetchData();
+          currentUser.getIdToken().then(token => {
+            authToken.value = token;
+            fetchData();
+          });
         } else {
+          user.value = null;
+          authToken.value = null;
           tasks.value = [];
           categories.value = [];
           templates.value = [];
@@ -661,6 +876,7 @@ export default {
       shareTask,
       filterByCategory,
       filterByStatus,
+      sortTasks,
       formatDate
     };
   }
