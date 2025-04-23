@@ -5,7 +5,6 @@ on:
   push:
     branches: [ main ]
 
-# Add this permissions section
 permissions:
   contents: write
   pages: write
