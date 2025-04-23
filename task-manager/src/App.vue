@@ -358,32 +358,41 @@ import {
   onAuthStateChanged,
   updateProfile 
 } from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  addDoc,  
+  getDocs, 
+  updateDoc, 
+  deleteDoc, 
+  query, 
+  where, 
+  serverTimestamp, 
+  arrayUnion
+} from 'firebase/firestore';
 import { initializeApp } from 'firebase/app';
-import axios from 'axios';
 
 export default {
   name: 'TaskManager',
   setup() {
     // Firebase config - replace with your own
     const firebaseConfig = {
-        apiKey: "AIzaSyDuQ5U_jvbDYwHIyvGGlIso09Vc9jnMoWU",
-        authDomain: "termproject-89a0d.firebaseapp.com",
-        projectId: "termproject-89a0d",
-        storageBucket: "termproject-89a0d.firebasestorage.app",
-        messagingSenderId: "718048077031",
-        appId: "1:718048077031:web:0746e272b7399ac2bdee42"
-      };
+      apiKey: "AIzaSyDuQ5U_jvbDYwHIyvGGlIso09Vc9jnMoWU",
+      authDomain: "termproject-89a0d.firebaseapp.com",
+      projectId: "termproject-89a0d",
+      storageBucket: "termproject-89a0d.firebasestorage.app",
+      messagingSenderId: "718048077031",
+      appId: "1:718048077031:web:0746e272b7399ac2bdee42"
+    };
     
     // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
-    
-    // Backend API URL
-    const apiUrl = ref('http://localhost:3000/api');
+    const db = getFirestore(app);
     
     // State
     const user = ref(null);
-    const authToken = ref(null);
     const tasks = ref([]);
     const categories = ref([]);
     const templates = ref([]);
@@ -488,11 +497,12 @@ export default {
           displayName: registerForm.value.displayName
         });
         
-        // Create user in backend
-        await axios.post(`${apiUrl.value}/users`, {
+        // Store additional user data in Firestore
+        await addDoc(collection(db, 'users'), {
           uid: userCredential.user.uid,
           email: registerForm.value.email,
-          displayName: registerForm.value.displayName
+          displayName: registerForm.value.displayName,
+          lastLogin: serverTimestamp()
         });
         
         showRegisterForm.value = false;
@@ -538,10 +548,41 @@ export default {
     
     const fetchTasks = async () => {
       try {
-        const response = await axios.get(`${apiUrl.value}/tasks`, {
-          headers: { Authorization: `Bearer ${authToken.value}` }
+        if (!user.value) return;
+        
+        const userId = user.value.uid;
+        
+        // Create two queries: one for tasks the user owns and one for shared tasks
+        const ownedTasksQuery = query(collection(db, 'tasks'), where('userId', '==', userId));
+        const sharedTasksQuery = query(collection(db, 'tasks'), where('sharedWith', 'array-contains', userId));
+        
+        // Execute both queries
+        const [ownedTasksSnapshot, sharedTasksSnapshot] = await Promise.all([
+          getDocs(ownedTasksQuery),
+          getDocs(sharedTasksQuery)
+        ]);
+        
+        const fetchedTasks = [];
+        
+        // Add owned tasks
+        ownedTasksSnapshot.forEach(doc => {
+          fetchedTasks.push({
+            id: doc.id,
+            ...doc.data(),
+            isOwner: true
+          });
         });
-        tasks.value = response.data;
+        
+        // Add shared tasks
+        sharedTasksSnapshot.forEach(doc => {
+          fetchedTasks.push({
+            id: doc.id,
+            ...doc.data(),
+            isOwner: false
+          });
+        });
+        
+        tasks.value = fetchedTasks;
       } catch (error) {
         console.error('Error fetching tasks:', error);
       }
@@ -549,10 +590,21 @@ export default {
     
     const fetchCategories = async () => {
       try {
-        const response = await axios.get(`${apiUrl.value}/categories`, {
-          headers: { Authorization: `Bearer ${authToken.value}` }
+        if (!user.value) return;
+        
+        const userId = user.value.uid;
+        const categoriesQuery = query(collection(db, 'categories'), where('userId', '==', userId));
+        const categoriesSnapshot = await getDocs(categoriesQuery);
+        
+        const fetchedCategories = [];
+        categoriesSnapshot.forEach(doc => {
+          fetchedCategories.push({
+            id: doc.id,
+            ...doc.data()
+          });
         });
-        categories.value = response.data;
+        
+        categories.value = fetchedCategories;
         
         // If no category selected and we have categories, select the first or default one
         if (selectedCategory.value === null && uncategorizedOnly.value === false && categories.value.length > 0) {
@@ -566,10 +618,18 @@ export default {
     
     const fetchTemplates = async () => {
       try {
-        const response = await axios.get(`${apiUrl.value}/templates`, {
-          headers: { Authorization: `Bearer ${authToken.value}` }
+        const templatesQuery = query(collection(db, 'sharedTemplates'), where('isPublic', '==', true));
+        const templatesSnapshot = await getDocs(templatesQuery);
+        
+        const fetchedTemplates = [];
+        templatesSnapshot.forEach(doc => {
+          fetchedTemplates.push({
+            id: doc.id,
+            ...doc.data()
+          });
         });
-        templates.value = response.data;
+        
+        templates.value = fetchedTemplates;
       } catch (error) {
         console.error('Error fetching templates:', error);
       }
@@ -593,18 +653,22 @@ export default {
       try {
         if (editingTask.value) {
           // Update existing task
-          await axios.put(
-            `${apiUrl.value}/tasks/${editingTask.value.id}`, 
-            taskForm.value,
-            { headers: { Authorization: `Bearer ${authToken.value}` } }
-          );
+          const taskRef = doc(db, 'tasks', editingTask.value.id);
+          await updateDoc(taskRef, {
+            ...taskForm.value,
+            lastModified: serverTimestamp()
+          });
         } else {
           // Create new task
-          await axios.post(
-            `${apiUrl.value}/tasks`, 
-            taskForm.value,
-            { headers: { Authorization: `Bearer ${authToken.value}` } }
-          );
+          await addDoc(collection(db, 'tasks'), {
+            ...taskForm.value,
+            userId: user.value.uid,
+            status: 'Not Started',
+            creationDate: serverTimestamp(),
+            lastModified: serverTimestamp(),
+            isShared: false,
+            sharedWith: []
+          });
         }
         
         // Reset and refresh
@@ -627,9 +691,7 @@ export default {
     const deleteTask = async (taskId) => {
       if (confirm('Are you sure you want to delete this task?')) {
         try {
-          await axios.delete(`${apiUrl.value}/tasks/${taskId}`, {
-            headers: { Authorization: `Bearer ${authToken.value}` }
-          });
+          await deleteDoc(doc(db, 'tasks', taskId));
           await fetchTasks();
         } catch (error) {
           console.error('Error deleting task:', error);
@@ -640,11 +702,11 @@ export default {
     
     const updateTaskStatus = async (task) => {
       try {
-        await axios.put(
-          `${apiUrl.value}/tasks/${task.id}`,
-          { status: task.status },
-          { headers: { Authorization: `Bearer ${authToken.value}` } }
-        );
+        const taskRef = doc(db, 'tasks', task.id);
+        await updateDoc(taskRef, {
+          status: task.status,
+          lastModified: serverTimestamp()
+        });
       } catch (error) {
         console.error('Error updating task status:', error);
         alert('Failed to update task status. Please try again.');
@@ -655,11 +717,10 @@ export default {
     // Category methods
     const saveCategory = async () => {
       try {
-        await axios.post(
-          `${apiUrl.value}/categories`,
-          categoryForm.value,
-          { headers: { Authorization: `Bearer ${authToken.value}` } }
-        );
+        await addDoc(collection(db, 'categories'), {
+          ...categoryForm.value,
+          userId: user.value.uid
+        });
         
         // Reset and refresh
         showCategoryForm.value = false;
@@ -679,25 +740,28 @@ export default {
     const saveTemplate = async () => {
       try {
         // Prepare tasks for the template
-        const templateTasks = tasks.value
-          .filter(task => templateForm.value.selectedTasks.includes(task.id))
-          .map(task => ({
-            title: task.title,
-            description: task.description,
-            priority: task.priority,
-            category: task.category
-          }));
+        const templateTasks = [];
+        for (const taskId of templateForm.value.selectedTasks) {
+          const task = tasks.value.find(t => t.id === taskId);
+          if (task) {
+            templateTasks.push({
+              title: task.title,
+              description: task.description,
+              priority: task.priority,
+              category: task.category
+            });
+          }
+        }
         
-        await axios.post(
-          `${apiUrl.value}/templates`,
-          {
-            title: templateForm.value.title,
-            description: templateForm.value.description,
-            tasks: templateTasks,
-            isPublic: templateForm.value.isPublic
-          },
-          { headers: { Authorization: `Bearer ${authToken.value}` } }
-        );
+        await addDoc(collection(db, 'sharedTemplates'), {
+          title: templateForm.value.title,
+          description: templateForm.value.description,
+          tasks: templateTasks,
+          isPublic: templateForm.value.isPublic,
+          creatorId: user.value.uid,
+          downloadCount: 0,
+          createdAt: serverTimestamp()
+        });
         
         // Reset and refresh
         showTemplateForm.value = false;
@@ -715,17 +779,18 @@ export default {
     };
     
     const useTemplate = async (template) => {
-      // Create tasks from the template
       try {
         for (const taskTemplate of template.tasks) {
-          await axios.post(
-            `${apiUrl.value}/tasks`,
-            {
-              ...taskTemplate,
-              dueDate: getDefaultDueDate() // Set a default due date
-            },
-            { headers: { Authorization: `Bearer ${authToken.value}` } }
-          );
+          await addDoc(collection(db, 'tasks'), {
+            ...taskTemplate,
+            userId: user.value.uid,
+            dueDate: getDefaultDueDate(),
+            status: 'Not Started',
+            creationDate: serverTimestamp(),
+            lastModified: serverTimestamp(),
+            isShared: false,
+            sharedWith: []
+          });
         }
         
         await fetchTasks();
@@ -749,11 +814,35 @@ export default {
           return;
         }
         
-        await axios.post(
-          `${apiUrl.value}/tasks/${taskToShare.value.id}/share`,
-          { shareWithEmails: emailsArray },
-          { headers: { Authorization: `Bearer ${authToken.value}` } }
-        );
+        // Get user IDs from emails
+        const sharedWithIds = [];
+        for (const email of emailsArray) {
+          const userQuery = query(collection(db, 'users'), where('email', '==', email));
+          const userQuerySnapshot = await getDocs(userQuery);
+          if (!userQuerySnapshot.empty) {
+            userQuerySnapshot.forEach(doc => {
+              sharedWithIds.push(doc.id);
+            });
+          }
+        }
+        
+        // Update the task
+        const taskRef = doc(db, 'tasks', taskToShare.value.id);
+        
+        // Check if there are any shared IDs before updating
+        if (sharedWithIds.length > 0) {
+          await updateDoc(taskRef, {
+            isShared: true,
+            sharedWith: arrayUnion(...sharedWithIds),
+            lastModified: serverTimestamp()
+          });
+        } else {
+          // Just update the isShared flag if no IDs to add
+          await updateDoc(taskRef, {
+            isShared: true,
+            lastModified: serverTimestamp()
+          });
+        }
         
         // Reset and refresh
         showShareTaskForm.value = false;
@@ -811,13 +900,8 @@ export default {
       const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
         user.value = currentUser;
         if (currentUser) {
-          currentUser.getIdToken().then(token => {
-            authToken.value = token;
-            fetchData();
-          });
+          fetchData();
         } else {
-          user.value = null;
-          authToken.value = null;
           tasks.value = [];
           categories.value = [];
           templates.value = [];
@@ -881,397 +965,3 @@ export default {
   }
 };
 </script>
-
-<style>
-/* Reset and base styles */
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  line-height: 1.6;
-  color: #333;
-  background-color: #f5f7fa;
-}
-
-.task-manager {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
-
-/* Header styles */
-header {
-  background-color: #2c3e50;
-  color: white;
-  padding: 1rem 2rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-header h1 {
-  font-size: 1.5rem;
-  font-weight: 600;
-}
-
-.user-section {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-/* Button styles */
-.btn {
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  transition: background-color 0.2s, transform 0.1s;
-  background-color: #ecf0f1;
-  color: #2c3e50;
-}
-
-.btn:hover {
-  background-color: #dfe4ea;
-  transform: translateY(-1px);
-}
-
-.btn-primary {
-  background-color: #3498db;
-  color: white;
-}
-
-.btn-primary:hover {
-  background-color: #2980b9;
-}
-
-.btn-lg {
-  padding: 0.75rem 1.5rem;
-  font-size: 1rem;
-}
-
-.btn-sm {
-  padding: 0.3rem 0.6rem;
-  font-size: 0.8rem;
-}
-
-.btn-icon {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 1rem;
-  opacity: 0.7;
-  transition: opacity 0.2s;
-}
-
-.btn-icon:hover {
-  opacity: 1;
-}
-
-.shared {
-  color: #3498db;
-}
-
-/* Dashboard layout */
-.dashboard {
-  display: flex;
-  flex: 1;
-}
-
-.sidebar {
-  width: 250px;
-  background-color: white;
-  border-right: 1px solid #e0e0e0;
-  padding: 1.5rem 0;
-}
-
-.content {
-  flex: 1;
-  padding: 1.5rem;
-}
-
-/* Sidebar components */
-.sidebar h3 {
-  font-size: 0.9rem;
-  text-transform: uppercase;
-  color: #7f8c8d;
-  padding: 0 1.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.sidebar ul {
-  list-style: none;
-  margin-bottom: 2rem;
-}
-
-.sidebar li {
-  padding: 0.75rem 1.5rem;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.sidebar li:hover {
-  background-color: #f5f7fa;
-}
-
-.sidebar li.active {
-  background-color: #ecf0f1;
-  font-weight: 500;
-}
-
-.sidebar li.add-category,
-.sidebar li.add-template {
-  color: #3498db;
-  font-size: 0.9rem;
-}
-
-/* Controls section */
-.controls {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1.5rem;
-}
-
-.sort-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.sort-controls select {
-  padding: 0.4rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-}
-
-/* Tasks container */
-.tasks-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 1.5rem;
-}
-
-/* Task card */
-.task-card {
-  background-color: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  border-top: 3px solid #95a5a6; /* Default color */
-}
-
-.task-card.priority-high {
-  border-top-color: #e74c3c;
-}
-
-.task-card.priority-medium {
-  border-top-color: #f39c12;
-}
-
-.task-card.priority-low {
-  border-top-color: #2ecc71;
-}
-
-.task-card.status-completed {
-  opacity: 0.7;
-}
-
-.task-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-}
-
-.task-header h3 {
-  font-size: 1.1rem;
-  font-weight: 600;
-  margin-right: 1rem;
-  word-break: break-word;
-}
-
-.task-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-shrink: 0;
-}
-
-.task-description {
-  margin-bottom: 1rem;
-  font-size: 0.9rem;
-  color: #555;
-  flex: 1;
-}
-
-.task-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 0.85rem;
-}
-
-.task-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.task-due-date {
-  color: #7f8c8d;
-}
-
-.task-priority {
-  display: inline-block;
-  padding: 0.2rem 0.4rem;
-  border-radius: 3px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  background-color: #ecf0f1;
-}
-
-.priority-high .task-priority {
-  background-color: #fde2e0;
-  color: #c0392b;
-}
-
-.priority-medium .task-priority {
-  background-color: #fef2d9;
-  color: #d35400;
-}
-
-.priority-low .task-priority {
-  background-color: #d5f5e3;
-  color: #27ae60;
-}
-
-.task-status select {
-  padding: 0.3rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 0.8rem;
-}
-
-.no-tasks {
-  grid-column: 1 / -1;
-  text-align: center;
-  padding: 2rem;
-  background-color: white;
-  border-radius: 8px;
-  color: #7f8c8d;
-}
-
-/* Modal styles */
-.modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 100;
-}
-
-.modal-content {
-  background-color: white;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  width: 100%;
-  max-width: 500px;
-  padding: 2rem;
-}
-
-.modal-content h2 {
-  margin-bottom: 1.5rem;
-  font-size: 1.5rem;
-  font-weight: 600;
-}
-
-/* Form styles */
-.form-group {
-  margin-bottom: 1.25rem;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-weight: 500;
-}
-
-.form-group input[type="text"],
-.form-group input[type="email"],
-.form-group input[type="password"],
-.form-group input[type="date"],
-.form-group textarea,
-.form-group select {
-  width: 100%;
-  padding: 0.75rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 1rem;
-}
-
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 1rem;
-  margin-top: 1.5rem;
-}
-
-.template-tasks-selection {
-  max-height: 200px;
-  overflow-y: auto;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 0.5rem;
-}
-
-.template-task-item {
-  padding: 0.5rem;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.template-task-item:last-child {
-  border-bottom: none;
-}
-
-/* Landing page */
-.landing-page {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  flex: 1;
-  padding: 2rem;
-}
-
-.landing-page h2 {
-  font-size: 2.5rem;
-  margin-bottom: 1rem;
-  font-weight: 700;
-}
-
-.landing-page p {
-  font-size: 1.2rem;
-  color: #7f8c8d;
-  margin-bottom: 2rem;
-  max-width: 600px;
-}
-
-.cta-buttons {
-  display: flex;
-  gap: 1rem;
-}
-
-</style>
