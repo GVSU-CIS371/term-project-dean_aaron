@@ -359,7 +359,6 @@ import {
   updateProfile 
 } from 'firebase/auth';
 import { initializeApp } from 'firebase/app';
-import { db } from './firebase';
 import axios from 'axios';
 
 export default {
