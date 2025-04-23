@@ -58,15 +58,34 @@ app.post('/api/users', async (req, res) => {
 app.get('/api/tasks', authenticateUser, async (req, res) => {
   try {
     const userId = req.user.uid;
-    const tasksSnapshot = await db.collection('tasks')
-      .where('userId', '==', userId)
-      .get();
+    
+    // Create two queries: one for tasks the user owns and one for shared tasks
+    const ownedTasksQuery = db.collection('tasks').where('userId', '==', userId);
+    const sharedTasksQuery = db.collection('tasks').where('sharedWith', 'array-contains', userId);
+    
+    // Execute both queries
+    const [ownedTasksSnapshot, sharedTasksSnapshot] = await Promise.all([
+      ownedTasksQuery.get(),
+      sharedTasksQuery.get()
+    ]);
     
     const tasks = [];
-    tasksSnapshot.forEach(doc => {
+    
+    // Add owned tasks
+    ownedTasksSnapshot.forEach(doc => {
       tasks.push({
         id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        isOwner: true
+      });
+    });
+    
+    // Add shared tasks
+    sharedTasksSnapshot.forEach(doc => {
+      tasks.push({
+        id: doc.id,
+        ...doc.data(),
+        isOwner: false
       });
     });
     
